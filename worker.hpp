@@ -40,7 +40,7 @@ Yandex 2014
     int TimeStamp;
     shared_string key;
     int count;
-    long size;
+    long size_element;
   };
 
   typedef boost::interprocess::allocator<
@@ -75,20 +75,13 @@ Yandex 2014
       shared_string, CustomList::iterator, boost::hash<shared_string>,
       std::equal_to<shared_string>, HashAllocator> CustomHashTable;
 
-
-
-
-
-
-
-
-
 class worker {
 public:
   worker(cocaine::framework::dispatch_t &d);
 
   virtual ~worker () {
     COCAINE_LOG_INFO (m_log, "worker destructor");
+    boost::interprocess::shared_memory_object::remove("SharedMemory");
   }
 
   void init ();

@@ -8,9 +8,7 @@ Yandex 2014
 
 worker::worker(cocaine::framework::dispatch_t &d) {
   m_log = d.service_manager()->get_system_logger();
-  COCAINE_LOG_INFO(m_log, "Another process");
-  COCAINE_LOG_DEBUG(m_log, "Another process");
-  COCAINE_LOG_WARNING(m_log, "Another process");
+  COCAINE_LOG_INFO(m_log, "Starting the LRU worker");
 
   m_storage = d.service_manager()
       ->get_service<cocaine::framework::storage_service_t>("storage");
@@ -23,12 +21,9 @@ worker::worker(cocaine::framework::dispatch_t &d) {
 void worker::init() {
   COCAINE_LOG_INFO(m_log, "Initializing or grabbing the shared memory");
 
-  //  boost::interprocess::managed_shared_memory segment(
-  //  boost::interprocess::open_or_create, "SharedMemory", 65536);
+  boost::interprocess::shared_memory_object::remove("SharedMemory"); 
 
   m_segment.reset(new boost::interprocess::managed_shared_memory(boost::interprocess::open_or_create, "SharedMemory", 65536));
-
-
 
   char_allocator c_allocator(m_segment->get_segment_manager());
   void_allocator alloc_inst(m_segment->get_segment_manager());
@@ -92,7 +87,7 @@ void on_get::on_chunk(const char *chunk, size_t size) {
 
   std::string output;
 
-  struct shm_remove {
+  /*  struct shm_remove {
     shm_remove() {
       boost::interprocess::shared_memory_object::remove("SharedMemory");
     }
@@ -100,45 +95,29 @@ void on_get::on_chunk(const char *chunk, size_t size) {
       boost::interprocess::shared_memory_object::remove("SharedMemory");
     }
   } remover;
-
+  */
   struct mutex_remove {
     mutex_remove() { boost::interprocess::named_mutex::remove("SharedMutex"); }
     ~mutex_remove() { boost::interprocess::named_mutex::remove("SharedMutex"); }
 
   } mutex_remover;
-
-
-
-
+  
   auto received_data = context.data().to_string();
 
   msgpack::unpacked msg;    // includes memory pool and deserialized object
   msgpack::unpack(&msg, received_data.c_str(), received_data.size());
   msgpack::object obj = msg.get();
 
-  // Print the deserialized object to stdout.
-  
-
-  //std::cout << obj << std::endl;    // ["Hello," "World!"]
-
-  // Convert the deserializecontext.data().to_string();d object to staticaly typed object.
-  
-
-
   std::vector<std::string> result;
   obj.convert(&result);
 
-  output = "Received size " + result.at(1);
-
-    COCAINE_LOG_INFO(logger, output.c_str());
-
-
-
-
-
-
-    auto key = result.at(0);//context.data().to_string();
-    auto received_size = atol(result.at(1).c_str());
+  auto key = result.at(0);//context.data().to_string();
+  auto received_size = atol(result.at(1).c_str());
+  
+  output = "Received size " + std::to_string (received_size);
+  
+  COCAINE_LOG_DEBUG(logger, output.c_str());
+    
 
 
   boost::interprocess::named_mutex mutex(boost::interprocess::open_or_create,
@@ -172,18 +151,16 @@ void on_get::on_chunk(const char *chunk, size_t size) {
   //CustomList *SharedList;
 
   {
-    //    COCAINE_LOG_INFO(parent().log, "Test2");
     boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
-        mutex);
+    mutex);
 
     //SharedList =
     //  segment.find_or_construct<CustomList>("SharedList")(alloc_inst);
     ////////////////////////////////////////////////
-    COCAINE_LOG_INFO(logger, "Test3");
 
         output = "Starting size " + std::to_string(SharedList->size());
 
-	  COCAINE_LOG_INFO(logger, output.c_str());
+	  COCAINE_LOG_DEBUG(logger, output.c_str());
 
     /*    CustomHashTable *SharedHashTable =
 
@@ -192,8 +169,6 @@ void on_get::on_chunk(const char *chunk, size_t size) {
             segment
 	    .get_allocator<std::pair<shared_string, CustomListIterator> >());*/
     //////////////////////////////////
-
-    COCAINE_LOG_INFO(logger, "Test3");
 
     //char_allocator c_allocator(segment.get_segment_manager());
     //string_allocator s_allocator(segment.get_segment_manager());
@@ -205,45 +180,44 @@ void on_get::on_chunk(const char *chunk, size_t size) {
 
     double time_in_mill = (tv.tv_sec) * 1000 + (tv.tv_usec) / 1000;
 
-    COCAINE_LOG_INFO(logger, "Test3");
-
-
-    //s = char_string ("key");
-
     auto found_it = SharedHashTable->find(sh_string);
     CustomList::iterator node;
 
-    if (found_it != SharedHashTable->end())
+    if (found_it != SharedHashTable->end()){
       node = found_it->second;
 
-COCAINE_LOG_INFO(logger, "Test3");
+    output = "Original size: "+ std::to_string(node->size_element) + " Received size: " + std::to_string (received_size);
 
-    if (found_it == SharedHashTable->end() || node->size != received_size) {
+    COCAINE_LOG_DEBUG(logger, output);}
+
+    if (found_it == SharedHashTable->end() || node->size_element != received_size) {
 
       if (found_it != SharedHashTable->end()){
-	COCAINE_LOG_INFO(logger, "Element has changed. Recaching");
+	COCAINE_LOG_DEBUG(logger, "Element has changed. Recaching");
 
-	SharedHashTable->erase(found_it);
 	SharedList->erase(node);
+	COCAINE_LOG_DEBUG(logger, "Element has changed. Recaching");
+	SharedHashTable->erase(found_it);
       }
 
-      COCAINE_LOG_INFO(logger, "Adding a new element");
+      COCAINE_LOG_DEBUG(logger, "Adding a new element");
 
       ListNode node;
       node.TimeStamp = time_in_mill;
       node.key = result.at(0).c_str();
       node.count = 1;
-      node.size = received_size;
+      node.size_element = received_size;
 
       SharedList->push_back(node);
 
       auto it = SharedList->end();
+      --it;
 
       SharedHashTable->insert(
           std::pair<shared_string, CustomList::iterator>(sh_string, it));
     } else {
 
-      COCAINE_LOG_INFO(logger, "Element found in the cache");
+      COCAINE_LOG_DEBUG(logger, "Element found in the cache");
       //      auto first = found_it->first;
 
       //auto converted = first.c_str();
@@ -280,7 +254,7 @@ COCAINE_LOG_INFO(logger, "Test3");
 
     output = "Ending size " + std::to_string(SharedList->size());
 
-    COCAINE_LOG_INFO(logger, output.c_str());
+    COCAINE_LOG_DEBUG(logger, output.c_str());
 
     cocaine::framework::http_headers_t headers;
     headers.add_header("Content-Length", "0");
