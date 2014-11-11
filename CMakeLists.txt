@@ -34,7 +34,7 @@ find_package(Boost 1.45.0 COMPONENTS thread system)
 
 if (Boost_FOUND)
 	add_executable(worker worker.cpp)
-	target_link_libraries(worker ${Boost_LIBRARIES} pthread ev rt elliptics_cpp cocaine-framework msgpack)
+	target_link_libraries(worker ${Boost_LIBRARIES} pthread ev rt elliptics_cpp elliptics_client cocaine-framework msgpack jsoncpp)
 
 # -lboost_program_options -lboost_thread-mt worker.cpp -o worker -lboost_system -lmsgpack -lev -lcocaine-framework -lpthread -lrt -lelliptics_cpp
 

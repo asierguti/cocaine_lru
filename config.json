@@ -1,0 +1,9 @@
+{
+  "shared_memory": 1024,
+  "hit_limit": 3,
+  "ellitpics": "84.201.160.193",
+  "group" : [1],
+  "max_limit" : 10485760,
+  "remote_address" : "84.201.160.193",
+  "remote_port" : 1025
+}
