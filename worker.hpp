@@ -5,6 +5,8 @@ Yandex 2014
 
 **/
 
+#include "utils.hpp"
+
 #include <boost/interprocess/sync/interprocess_mutex.hpp>
 #include <boost/interprocess/sync/named_mutex.hpp>
 #include <boost/interprocess/sync/scoped_lock.hpp>
@@ -17,6 +19,7 @@ Yandex 2014
 
 #include <time.h>
 #include <unistd.h>
+#include <stdio.h>
 
 #include <vector>
 #include <string>
@@ -28,16 +31,24 @@ Yandex 2014
 #include <cocaine/framework/dispatch.hpp>
 #include <cocaine/framework/services/storage.hpp>
 
+#include <cocaine/api/stream.hpp>
+
+
 #include <elliptics/utils.hpp>
 #include <elliptics/result_entry.hpp>
+#include <elliptics/session.hpp>
+#include <elliptics/cppdef.h>
 
 #include <msgpack.hpp>
 
+#include <json/json.h>
+
+  using namespace ioremap::elliptics;
 
   typedef boost::interprocess::basic_string<char> shared_string;
 
   struct ListNode {
-    int TimeStamp;
+    double TimeStamp;
     shared_string key;
     int count;
     long size_element;
@@ -65,17 +76,25 @@ Yandex 2014
       ListNode, boost::interprocess::managed_shared_memory::segment_manager>
       CustomListAllocator;
   typedef boost::interprocess::list<ListNode, CustomListAllocator> CustomList;
-  typedef boost::interprocess::list<ListNode>::iterator CustomListIterator;
+  typedef boost::interprocess::list<ListNode, CustomListAllocator>::iterator CustomListIterator;
+
+
 
   typedef boost::interprocess::allocator<
-      std::pair<shared_string, CustomList::iterator>,
+    std::pair<shared_string, CustomList::iterator>,
       boost::interprocess::managed_shared_memory::segment_manager>
       HashAllocator;
   typedef boost::unordered_map<
-      shared_string, CustomList::iterator, boost::hash<shared_string>,
+    shared_string, CustomList::iterator, boost::hash<shared_string>,
       std::equal_to<shared_string>, HashAllocator> CustomHashTable;
 
+
+
 class worker {
+private:
+  //  ioremap::elliptics::session init_session ();
+  void init ();
+
 public:
   worker(cocaine::framework::dispatch_t &d);
 
@@ -83,8 +102,6 @@ public:
     COCAINE_LOG_INFO (m_log, "worker destructor");
     boost::interprocess::shared_memory_object::remove("SharedMemory");
   }
-
-  void init ();
 
   std::shared_ptr<cocaine::framework::logger_t> getLogger ();
   CustomList * getList();
@@ -96,18 +113,73 @@ public:
   CustomList *m_SharedList;
   CustomHashTable *m_SharedHashTable;
 
+  long m_MaxSize;
+  long m_TotalSize;
+
   std::shared_ptr<boost::interprocess::managed_shared_memory> m_segment;
+
+  int m_hit_limit;
+
+  std::string m_remote_address;
+  int m_remote_port;
+  std::vector <int> m_groups;
+
+  file_logger m_lo;//("/dev/stderr", DNET_LOG_ERROR);
+  //logger lb = blackhole::verbose_logger_t<blackhole::defaults::severity> (lo);                                                                
+  ioremap::elliptics::node m_no;//(logger (lo, blackhole::log::attributes_t()));
+  //no.add_remote(address(parent().m_remote_address, parent().m_remote_port));
+
+  //  ioremap::elliptics::session m_sess;//(no);
+
 
 };
 
-struct on_get : public cocaine::framework::handler<worker>,
-                public std::enable_shared_from_this<on_get> {
+struct on_get : public cocaine::framework::handler <worker>,
+		public std::enable_shared_from_this<on_get> {
   on_get(worker &w) : cocaine::framework::handler<worker>(w) {
     COCAINE_LOG_INFO(parent().m_log, "Constructor");
+    //    boost::interprocess::named_mutex::remove("SharedMutex");
+  }
 
-}
+  virtual ~on_get() {
+    COCAINE_LOG_INFO(parent().m_log, "Destructor");
+    //    boost::interprocess::named_mutex::remove("SharedMutex");
+  }
 
   void on_chunk(const char *chunk, size_t size);
 
   void send(cocaine::framework::generator<std::string> &g) {}
+};
+
+struct on_put : public cocaine::framework::handler <worker>,
+		public std::enable_shared_from_this<on_put> {
+  on_put(worker &w) : cocaine::framework::handler<worker>(w) {
+    COCAINE_LOG_INFO(parent().m_log, "Constructor");
+    // boost::interprocess::named_mutex::remove("SharedMutex");
+  }
+
+  virtual ~on_put (){
+    //boost::interprocess::named_mutex::remove("SharedMutex");
+  }
+
+  void on_chunk(const char *chunk, size_t size);
+  /*  void on_invoke ();
+  void on_close ();
+
+  void send(cocaine::framework::generator<std::string> &g) {}*/
+};
+
+
+struct flush : public cocaine::framework::handler <worker>,
+		public std::enable_shared_from_this<flush> {
+  flush(worker &w) : cocaine::framework::handler<worker>(w) {
+    COCAINE_LOG_INFO(parent().m_log, "Constructor");
+    // boost::interprocess::named_mutex::remove("SharedMutex");
+  }
+
+  virtual ~flush (){
+    //  boost::interprocess::named_mutex::remove("SharedMutex");
+  }
+
+  void on_chunk(const char *chunk, size_t size);
 };
