@@ -60,17 +60,6 @@ Yandex 2014
   typedef boost::interprocess::allocator<
       char, boost::interprocess::managed_shared_memory::segment_manager>
       char_allocator;
-//  typedef boost::interprocess::basic_string<char, std::char_traits<char>,
-//                                          char_allocator> char_string;
-
-//typedef boost::interprocess::allocator<
-//    char_string, boost::interprocess::managed_shared_memory::segment_manager>
-//    string_allocator;
-
-
-
-
-
 
   typedef boost::interprocess::allocator<
       ListNode, boost::interprocess::managed_shared_memory::segment_manager>
@@ -89,10 +78,8 @@ Yandex 2014
       std::equal_to<shared_string>, HashAllocator> CustomHashTable;
 
 
-
 class worker {
 private:
-  //  ioremap::elliptics::session init_session ();
   void init ();
 
 public:
@@ -124,14 +111,8 @@ public:
   int m_remote_port;
   std::vector <int> m_groups;
 
-  file_logger m_lo;//("/dev/stderr", DNET_LOG_ERROR);
-  //logger lb = blackhole::verbose_logger_t<blackhole::defaults::severity> (lo);                                                                
-  ioremap::elliptics::node m_no;//(logger (lo, blackhole::log::attributes_t()));
-  //no.add_remote(address(parent().m_remote_address, parent().m_remote_port));
-
-  //  ioremap::elliptics::session m_sess;//(no);
-
-
+  file_logger m_lo;
+  ioremap::elliptics::node m_no;
 };
 
 struct on_get : public cocaine::framework::handler <worker>,
@@ -143,7 +124,7 @@ struct on_get : public cocaine::framework::handler <worker>,
 
   virtual ~on_get() {
     COCAINE_LOG_INFO(parent().m_log, "Destructor");
-    //    boost::interprocess::named_mutex::remove("SharedMutex");
+    //boost::interprocess::named_mutex::remove("SharedMutex");
   }
 
   void on_chunk(const char *chunk, size_t size);
@@ -159,14 +140,10 @@ struct on_put : public cocaine::framework::handler <worker>,
   }
 
   virtual ~on_put (){
-    //boost::interprocess::named_mutex::remove("SharedMutex");
+    //    boost::interprocess::named_mutex::remove("SharedMutex");
   }
 
   void on_chunk(const char *chunk, size_t size);
-  /*  void on_invoke ();
-  void on_close ();
-
-  void send(cocaine::framework::generator<std::string> &g) {}*/
 };
 
 
@@ -178,7 +155,7 @@ struct flush : public cocaine::framework::handler <worker>,
   }
 
   virtual ~flush (){
-    //  boost::interprocess::named_mutex::remove("SharedMutex");
+    //    boost::interprocess::named_mutex::remove("SharedMutex");
   }
 
   void on_chunk(const char *chunk, size_t size);
