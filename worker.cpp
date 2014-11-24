@@ -26,92 +26,110 @@ worker::worker(cocaine::framework::dispatch_t &d)
 void worker::init() {
   COCAINE_LOG_INFO(m_log, "Initializing or grabbing the shared memory");
 
-  Json::Value root;
-  std::ifstream file("config.json");
-  file >> root;
+  struct mutex_remove {
+    mutex_remove() { boost::interprocess::named_mutex::remove("InitMutex"); }
+    ~mutex_remove() { boost::interprocess::named_mutex::remove("InitMutex"); }
 
-  int memory_size = root.get("shared_memory", "").asInt();
-  std::string log = "Shared memory: " + std::to_string(memory_size);
+  } mutex_remover;
 
-  COCAINE_LOG_INFO(m_log, log);
+  boost::interprocess::named_mutex init_mutex(
+      boost::interprocess::open_or_create, "InitMutex");
+  {
+    boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
+        init_mutex);
+    Json::Value root;
+    std::ifstream file("config.json");
+    file >> root;
 
-  m_hit_limit = root.get("hit_limit", "").asInt();
+    int memory_size = root.get("shared_memory", "").asInt();
+    std::string log = "Shared memory: " + std::to_string(memory_size);
 
-  log = "Hit limit: " + std::to_string(m_hit_limit);
+    COCAINE_LOG_INFO(m_log, log);
 
-  COCAINE_LOG_INFO(m_log, log);
+    m_hit_limit = root.get("hit_limit", "").asInt();
 
-  m_MaxSize = root.get("max_limit", "").asInt64();
+    log = "Hit limit: " + std::to_string(m_hit_limit);
 
-  m_segment.reset(new boost::interprocess::managed_shared_memory(
-      boost::interprocess::open_or_create, "SharedMemory",  //open_or_create
-      memory_size * 1024 * 1024));
+    COCAINE_LOG_INFO(m_log, log);
 
-  char_allocator c_allocator(m_segment->get_segment_manager());
-  void_allocator alloc_inst(m_segment->get_segment_manager());
+    m_MaxSize = root.get("max_limit", "").asInt64();
 
-  m_SharedList =
-      m_segment->find_or_construct<CustomList>("SharedList")(alloc_inst);
+    boost::interprocess::shared_memory_object::remove("SharedMemory");
 
-  m_SharedHashTable =
-      m_segment->find_or_construct<CustomHashTable>("SharedHashTable")(
-          3, boost::hash<shared_string>(), std::equal_to<shared_string>(),
-          m_segment
-              ->get_allocator<std::pair<shared_string, CustomListIterator> >());
+    m_segment.reset(new boost::interprocess::managed_shared_memory(
+        boost::interprocess::open_or_create, "SharedMemory",
+        memory_size * 1024 * 1024));
 
-  //////////////////////////
+    char_allocator c_allocator(m_segment->get_segment_manager());
+    void_allocator alloc_inst(m_segment->get_segment_manager());
 
-  m_remote_port = root.get("remote_port", "").asInt();
-  m_remote_address = root.get("remote_address", "").asString();
+    m_SharedList =
+        m_segment->find_or_construct<CustomList>("SharedList")(alloc_inst);
 
-  for (int i = 0; i < root.get("group", "").size(); ++i) {
-    m_groups.emplace_back(root.get("group", "")[i].asInt());
-  }
+    m_SharedHashTable = m_segment->find_or_construct<CustomHashTable>(
+        "SharedHashTable")(
+        3, boost::hash<shared_string>(), std::equal_to<shared_string>(),
+        m_segment
+            ->get_allocator<std::pair<shared_string, CustomListIterator> >());
 
-  using namespace ioremap::elliptics;
+    m_remote_port = root.get("remote_port", "").asInt();
+    m_remote_address = root.get("remote_address", "").asString();
 
-  m_no = node(logger(m_lo, blackhole::log::attributes_t()));
-  m_no.add_remote(address(m_remote_address, m_remote_port));
+    for (int i = 0; i < root.get("group", "").size(); ++i) {
+      m_groups.emplace_back(root.get("group", "")[i].asInt());
+    }
 
-  session sess(m_no);
-  sess.set_exceptions_policy(0x00);
+    using namespace ioremap::elliptics;
 
-  //  std::vector <int> groups;
+    m_no = node(logger(m_lo, blackhole::log::attributes_t()));
+    m_no.add_remote(address(m_remote_address, m_remote_port));
 
-  sess.set_groups(m_groups);
+    if (m_SharedList->size() == 0) {
 
-  auto async_result = sess.read_data(std::string("metadata"), 0, 0);
-  async_result.wait();
+      session sess(m_no);
+      sess.set_exceptions_policy(0x00);
+      sess.set_groups(m_groups);
 
-  if (!async_result.error()) {
-    std::string elliptics_data = async_result.get_one().file().to_string();
+      auto async_result = sess.read_data(std::string("metadata"), 0, 0);
+      async_result.wait();
 
-    Json::Reader reader;
-    reader.parse(elliptics_data, root, false);
-    //  elliptics_data >> root;
+      if (!async_result.error()) {
 
-    int size = root.get("List", "").size();
-    for (int i = 0; i < size; ++i) {
-      ListNode node;
+        std::string elliptics_data = async_result.get_one().file().to_string();
 
-      shared_string sh_string;
+        Json::Reader reader;
+        reader.parse(elliptics_data, root, false);
+        //  elliptics_data >> root;
 
-      node.TimeStamp = root.get("List", "")[i][0].asInt64();
-      sh_string = shared_string(root.get("List", "")[i][1].asString().c_str());
-      node.key = sh_string;
-      node.count = root.get("List", "")[i][2].asInt();
-      node.size_element = root.get("List", "")[i][3].asInt64();
+        int size = root.get("List", "").size();
+        for (int i = 0; i < size; ++i) {
+          ListNode node;
 
-      m_SharedList->push_back(node);
+          shared_string sh_string;
 
-      auto it = m_SharedList->end();
-      --it;
+          node.TimeStamp = root.get("List", "")[i][0].asInt64();
+          sh_string =
+              shared_string(root.get("List", "")[i][1].asString().c_str());
+          node.key = sh_string;
+          node.count = root.get("List", "")[i][2].asInt();
+          node.size_element = root.get("List", "")[i][3].asInt64();
 
-      m_SharedHashTable->insert(
-          std::pair<shared_string, CustomList::iterator>(sh_string, it));
+          m_SharedList->push_back(node);
+
+          auto it = m_SharedList->end();
+          --it;
+
+          m_SharedHashTable->insert(
+              std::pair<shared_string, CustomList::iterator>(sh_string, it));
+
+          std::string insert_log =
+              "Inserting key: " + std::string(sh_string.c_str());
+
+          COCAINE_LOG_DEBUG(m_log, insert_log);
+        }
+      }
     }
   }
-
   COCAINE_LOG_DEBUG(m_log, "Finished initializing the LRU");
 }
 
@@ -152,11 +170,6 @@ void on_get::on_chunk(const char *chunk, size_t size) {
     }
   } remover;
   */
-  struct mutex_remove {
-    mutex_remove() { boost::interprocess::named_mutex::remove("SharedMutex"); }
-    ~mutex_remove() { boost::interprocess::named_mutex::remove("SharedMutex"); }
-
-  } mutex_remover;
 
   auto received_data = context.data().to_string();
 
@@ -164,9 +177,16 @@ void on_get::on_chunk(const char *chunk, size_t size) {
 
   COCAINE_LOG_DEBUG(client_logger, output.c_str());
 
-  boost::interprocess::named_mutex mutex(boost::interprocess::open_or_create,
-                                         "SharedMutex");
+  struct mutex_remove {
+    mutex_remove() { boost::interprocess::named_mutex::remove("SharedMutex"); }
+    ~mutex_remove() { boost::interprocess::named_mutex::remove("SharedMutex"); }
+
+  } mutex_remover;
+
   {
+    boost::interprocess::named_mutex mutex(boost::interprocess::open_or_create,
+                                           "SharedMutex");
+
     boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
         mutex);
 
@@ -210,22 +230,27 @@ void on_get::on_chunk(const char *chunk, size_t size) {
       SharedList->push_back(node);
 
       auto it = SharedList->end();
-      --it;
+      it--;
 
       SharedHashTable->insert(
           std::pair<shared_string, CustomList::iterator>(sh_string, it));
 
-      response()->write("0", 1);  //0
+      response()->write("0", 1);
 
     } else {
 
       COCAINE_LOG_DEBUG(client_logger, "Element found in the cache");
 
-      gettimeofday(&tv, NULL);
+      //      gettimeofday(&tv, NULL);
 
-      time_in_mill =
+      /*      time_in_mill =
           (tv.tv_sec) * 1000 +
           (tv.tv_usec) / 1000;  // convert tv_sec & tv_usec to millisecond
+
+
+
+    double time_in_mill = (tv.tv_sec) * 1000 + (tv.tv_usec) / 1000;
+      */
 
       if (node->count > parent().m_hit_limit) {
         COCAINE_LOG_DEBUG(client_logger, "Hit count limit");
@@ -251,18 +276,16 @@ void on_get::on_chunk(const char *chunk, size_t size) {
           response()->write(elliptics_data.c_str(), elliptics_data.size());
         }
 
-        //response()->write("aaaa",4);
-
       } else {
         response()->write("0", 1);
 
       }
-      node->count++;
+      node->TimeStamp = time_in_mill;
+      ++node->count;
 
       SharedList->splice(SharedList->end(), *SharedList, node);
     }
   }
-
 }
 
 void on_put::on_chunk(const char *chunk, size_t size) {
@@ -284,17 +307,17 @@ void on_put::on_chunk(const char *chunk, size_t size) {
 
   std::string output;
 
+  std::string received_data = context.data().to_string();
+
   struct mutex_remove {
     mutex_remove() { boost::interprocess::named_mutex::remove("SharedMutex"); }
     ~mutex_remove() { boost::interprocess::named_mutex::remove("SharedMutex"); }
 
   } mutex_remover;
 
-  std::string received_data = context.data().to_string();
-
-  boost::interprocess::named_mutex mutex(boost::interprocess::open_or_create,
-                                         "SharedMutex");
   {
+    boost::interprocess::named_mutex mutex(boost::interprocess::open_or_create,
+                                           "SharedMutex");
     boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
         mutex);
 
@@ -314,7 +337,6 @@ void on_put::on_chunk(const char *chunk, size_t size) {
     CustomList::iterator node;
 
     if (found_it != SharedHashTable->end()) {
-
       auto received_size = std::stol(received_data);
       node = found_it->second;
 
@@ -327,7 +349,7 @@ void on_put::on_chunk(const char *chunk, size_t size) {
         using namespace ioremap::elliptics;
 
         session sess(parent().m_no);
-        sess.set_exceptions_policy(0x00);
+        //        sess.set_exceptions_policy(0x00);
 
         sess.set_groups(parent().m_groups);
 
@@ -336,27 +358,14 @@ void on_put::on_chunk(const char *chunk, size_t size) {
         SharedHashTable->erase(index_to_remove);
         SharedList->erase(to_remove);
       }
-
-      node = found_it->second;
-
       COCAINE_LOG_DEBUG(logger, "Adding metadata");
 
-      node->TimeStamp = time_in_mill;
-      node->count++;
       node->size_element = received_size;
-
-      SharedList->splice(SharedList->end(), *SharedList, node);
-
-      gettimeofday(&tv, NULL);
-
-      time_in_mill = (tv.tv_sec) * 1000 + (tv.tv_usec) / 1000;
       response()->write(" ", 1);
-
       parent().m_TotalSize = new_size;
-
-    } else {
-      response()->write(" ", 1);
     }
+
+    response()->write(" ", 1);
   }
 }
 
@@ -376,19 +385,26 @@ void flush::on_chunk(const char *chunk, size_t size) {
 
   } mutex_remover;
 
-  boost::interprocess::named_mutex mutex(boost::interprocess::open_or_create,
-                                         "SharedMutex");
   {
+    boost::interprocess::named_mutex mutex(boost::interprocess::open_or_create,
+                                           "SharedMutex");
     boost::interprocess::scoped_lock<boost::interprocess::named_mutex> lock(
         mutex);
 
     CustomList *SharedList = parent().getList();
-
     CustomListIterator it = SharedList->begin();
 
-    while (it++ != SharedList->end()) {
+    while (it != SharedList->end()) {
       Json::Value jsonVect;
       jsonVect.append(static_cast<Json::Value::Int64>(it->TimeStamp));
+
+      if (static_cast<Json::Value::Int64>(it->TimeStamp) < 0) {
+        double a = static_cast<Json::Value::Int64>(it->TimeStamp);
+        double b = it->TimeStamp;
+
+        double c = a - b;
+      }
+
       jsonVect.append(it->key.c_str());
       jsonVect.append(it->count);
       jsonVect.append(static_cast<Json::Value::Int64>(it->size_element));
@@ -398,6 +414,8 @@ void flush::on_chunk(const char *chunk, size_t size) {
       log11.append(it->key.c_str());
 
       COCAINE_LOG_INFO(logger, log11);
+
+      ++it;
     }
   }
 
@@ -409,7 +427,7 @@ void flush::on_chunk(const char *chunk, size_t size) {
 
   session sess(parent().m_no);
   sess.set_groups(parent().m_groups);
-  sess.set_exceptions_policy(0x01);
+  sess.set_exceptions_policy(0x00);
 
   try {
     sess.write_data(std::string("metadata"), data, 0).wait();
@@ -424,7 +442,6 @@ void flush::on_chunk(const char *chunk, size_t size) {
   COCAINE_LOG_INFO(logger, log);
 
   response()->write(log.c_str(), log.size());
-
 }
 
 int main(int argc, char *argv[]) {
